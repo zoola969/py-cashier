@@ -1,6 +1,6 @@
 import pytest
 
-from py_cashier.main import DefaultKeyBuilder
+from py_cashier._builders import DefaultKeyBuilder
 
 
 @pytest.mark.parametrize(
@@ -16,7 +16,7 @@ from py_cashier.main import DefaultKeyBuilder
     ],
 )
 def test_key_builder(args: list[int], kwargs: dict[str, int]):
-    def func(a: int, b: int, c: int = 1) -> None:  # noqa: ARG001
+    def func(a: int, b: int, c: int = 1) -> None:
         pass
 
     assert (
