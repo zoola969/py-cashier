@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, final, get_args, get_type_hints
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, final, get_args, get_type_hints, Sequence
 
 from typing_extensions import ParamSpec
 
@@ -22,8 +22,10 @@ NOT_SET = NotSet()
 
 
 def get_arg_default_value(argspec: inspect.FullArgSpec, arg_position: int) -> Any | NotSet:  # noqa: ANN401
+    """Return the default value for an argument at a given position."""
     if argspec.defaults is None:
         return NOT_SET
+    # the argument is keyword-only
     if arg_position >= len(argspec.args):
         return NOT_SET
     offset = len(argspec.args) - len(argspec.defaults)
@@ -32,13 +34,25 @@ def get_arg_default_value(argspec: inspect.FullArgSpec, arg_position: int) -> An
     return argspec.defaults[arg_position - offset]
 
 
+class NoKwargsError(Exception):
+    pass
+
+
 def get_kwarg_default_value(argspec: inspect.FullArgSpec, kwarg_name: str) -> Any | NotSet:  # noqa: ANN401
-    if argspec.kwonlydefaults is None:
+    """Return the default value for a keyword-only argument."""
+
+    if kwarg_name not in argspec.kwonlyargs:
+        raise NoKwargsError
+    if not argspec.kwonlydefaults:
         return NOT_SET
     return argspec.kwonlydefaults.get(kwarg_name, NOT_SET)
 
 
-def build_cache_key_template(by_name: Mapping[str, Any], *, delimiter: str = "\t") -> str:
+def build_cache_key_template(by_name: Mapping[str, ArgInfo], *, delimiter: str = "\t") -> str:
+    """Build cache key template string.
+    For instance, for function `func(a, b, c=1)` and default delimiter `\t` it will return string:
+    `a={a}\tb={b}\tc={c}`.
+    """
     return delimiter.join(f"{x}={{{x}}}" for x, _ in sorted(by_name.items(), key=lambda x: x[1].position))
 
 
@@ -48,14 +62,14 @@ def _cached(type_alias: Any) -> bool:  # noqa: ANN401
     return any(isinstance(type_arg, CacheWith) for type_arg in get_args(type_alias))
 
 
-class ArgsInfo(NamedTuple):
+class FuncArgsInfo(NamedTuple):
     by_name: Mapping[str, ArgInfo]
-    by_position: list[str]
+    by_position: Sequence[str]
     args_name: str | None
     kwargs_name: str | None
 
 
-def _collect_args_info(f: Callable[P, T]) -> ArgsInfo:
+def _collect_args_info(f: Callable[P, T]) -> FuncArgsInfo:
     argspec = inspect.getfullargspec(f)
     typing_info = get_type_hints(f, include_extras=True)
     by_name = {}
@@ -76,7 +90,7 @@ def _collect_args_info(f: Callable[P, T]) -> ArgsInfo:
             default=get_kwarg_default_value(argspec, arg),
             cached=_cached(typing_info.get(arg)),
         )
-    return ArgsInfo(by_name=by_name, by_position=by_position, args_name=argspec.varargs, kwargs_name=argspec.varkw)
+    return FuncArgsInfo(by_name=by_name, by_position=by_position, args_name=argspec.varargs, kwargs_name=argspec.varkw)
 
 
 class CacheWith:

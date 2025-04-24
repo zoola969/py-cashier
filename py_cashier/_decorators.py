@@ -9,20 +9,23 @@ from ttlru_map import TTLMap
 from typing_extensions import ParamSpec
 
 from py_cashier._builders import DefaultKeyBuilder
-from py_cashier.main import logger
+from py_cashier._storages import BaseLock, BaseStorage, Result, TTLMapStorage
+from py_cashier.logger import logger
 
 if TYPE_CHECKING:
     from py_cashier._builders import KeyBuilder
 
+TLock = TypeVar("TLock", bound=BaseLock)
 P = ParamSpec("P")
 T = TypeVar("T")
-# F = TypeVar("F", bound=Callable[..., Any])  # noqa: ERA001
 F = TypeVar("F", bound=Callable[..., Any])
+# F = Callable[P, T]
 
 
 @overload
 def cache(
     *,
+    storage_class: type[BaseStorage[T, TLock]] | None = None,
     key_builder: KeyBuilder[P, T] | None = None,
     max_size: int | None = 1024,
     ttl: timedelta | None = timedelta(minutes=1),
@@ -37,16 +40,19 @@ def cache(
     func: F | None = None,
     /,
     *,
+    storage_class: type[BaseStorage[T, TLock]] | None = None,
     key_builder: KeyBuilder[P, T] | None = None,
-    max_size: int | None = 1024,  # noqa: ARG001
-    ttl: timedelta | None = timedelta(minutes=1),  # noqa: ARG001
+    max_size: int | None = 1024,
+    ttl: timedelta | None = timedelta(minutes=1),
 ) -> Callable[[F], F]:
     """Cache decorator."""
+    if storage_class is None:
+        storage_class = TTLMapStorage[T]
 
     def _decorator(func_: F) -> F:
         if iscoroutinefunction(func_):
-            return _async_wrapper(func_)
-        return cast(F, _wrapper(func_, key_builder))
+            return cast(F, _async_wrapper(func_, storage_class, key_builder, max_size, ttl))
+        return cast(F, _wrapper(func_, storage_class, key_builder, max_size, ttl))
 
     if func is None:
         return _decorator
@@ -55,6 +61,37 @@ def cache(
 
 def _wrapper(
     func: Callable[P, T],
+    storage_class: type[BaseStorage[T, TLock]] | None,
+    key_builder: KeyBuilder[P, T] | None,
+    max_size: int | None,
+    ttl: timedelta | None,
+) -> Callable[P, T]:
+    if key_builder is None:
+        key_builder = DefaultKeyBuilder(func=func)
+
+    cache_storage = storage_class(max_size=max_size, ttl=ttl)
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        key = key_builder.build_key(*args, **kwargs)
+        with cache_storage.lock(key):
+            if (cached_result := cache_storage.get(key)) and isinstance(cached_result, Result):
+                logger.debug("Value for key '%s' has been retrieved from cache", key)
+                return cached_result.value
+            logger.debug("No entry for key '%s' in cache", key)
+
+            result = func(*args, **kwargs)
+
+            cache_storage.set(key, result)
+            logger.debug("Value for key '%s' has been set to cache", key)
+        return result
+
+    return wrapper
+
+
+def _async_wrapper(
+    func: Callable[P, T],
+    storage_class: type[BaseStorage],
     key_builder: KeyBuilder[P, T] | None,
     max_size: int | None = 1024,
     ttl: timedelta | None = timedelta(minutes=1),
@@ -62,30 +99,21 @@ def _wrapper(
     if key_builder is None:
         key_builder = DefaultKeyBuilder(func=func)
 
-    mapa = TTLMap[str, T](ttl=ttl, max_size=max_size)
+    cache_storage = storage_class(max_size=max_size, ttl=ttl)
 
     @wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         key = key_builder.build_key(*args, **kwargs)
-        # Todo multithreading dog piling
-        try:
-            res = mapa[key]
-            logger.debug("Value for key '%s' has been retrieved from cache map", key)
-        except KeyError:
-            logger.debug("No entry for key '%s' in cache map", key)
-        else:
-            return res
-        res = func(*args, **kwargs)
-        mapa[key] = res
-        logger.debug("Value for key '%s' has been set to cache map", key)
-        return res
+        async with cache_storage.lock(key):
+            if (cached_result := await cache_storage.aget(key)) and isinstance(cached_result, Result):
+                logger.debug("Value for key '%s' has been retrieved from cache", key)
+                return cached_result.value
+            logger.debug("No entry for key '%s' in cache", key)
+
+            result = await func(*args, **kwargs)
+
+            await cache_storage.aset(key, result)
+            logger.debug("Value for key '%s' has been set to cache", key)
+        return result
 
     return wrapper
-
-
-def _async_wrapper(func: F) -> F:
-    @wraps(func)
-    async def wrapper(*args, **kwargs):  # noqa: ANN002,ANN003,ANN202
-        return await func(*args, **kwargs)
-
-    return cast(F, wrapper)

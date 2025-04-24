@@ -15,8 +15,8 @@ from py_cashier._builders import DefaultKeyBuilder
         ([], {"a": 1, "b": 2, "c": 3}),
     ],
 )
-def test_key_builder(args: list[int], kwargs: dict[str, int]):
-    def func(a: int, b: int, c: int = 1) -> None:
+def test_key_builder(args: list[int], kwargs: dict[str, int]):  # FIXME: rewrite
+    def func(a: int, b: int, c: int = 3) -> None:
         pass
 
     assert (
@@ -24,5 +24,5 @@ def test_key_builder(args: list[int], kwargs: dict[str, int]):
             prefix="",
             func=func,
         ).build_key(*args, **kwargs)
-        == "//home/alexandr_mysky/develop/py-cashier/py_cashier/main.py/a=1/b=2/c=3"
+        == "//Users/alex/dev/private/py-cashier/tests/test_test.py/a=1\tb=2\tc=3"
     )

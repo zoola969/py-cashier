@@ -38,12 +38,16 @@ build = [
     "hatch~=1.7",
 ]
 docs = [
-    "sphinx~=7.2",
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "griffe-typingdoc",
 ]
 test = [
     "coverage~=7.3",
     "mypy~=1.13",
     "pytest~=8.1",
+    "pytest-asyncio~=0.24",
 ]
 
 [project.urls]
@@ -79,6 +83,8 @@ addopts = [
     "--strict-markers",
     "-vv",
 ]
+asyncio_default_fixture_loop_scope = "session"
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 120
